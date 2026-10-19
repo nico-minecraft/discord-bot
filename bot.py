@@ -1,7 +1,8 @@
-"""Discord bot that reports this machine's battery and usage."""
+"""Discord bot that reports this machine's usage, battery (if any) and Pi-hole stats."""
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import logging
 import os
@@ -54,6 +55,12 @@ def _device_name() -> str | None:
     return name or None
 
 
+async def _status_report() -> str:
+    # collect_status() blocks (CPU sampling, network checks), so keep it off the event loop.
+    status = await asyncio.to_thread(collect_status)
+    return format_status(status, _device_name())
+
+
 class StatusBot(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -81,7 +88,7 @@ class StatusBot(discord.Client):
             if message.author.id not in self.allowed_ids:
                 log.info("Ignored status request from %s", message.author.id)
                 return
-            await message.channel.send(format_status(collect_status(), _device_name()))
+            await message.channel.send(await _status_report())
             return
         reply = self.replies.lookup(text)
         if reply:
@@ -96,7 +103,7 @@ def main() -> None:
     lock = _acquire_singleton_lock()
     bot = StatusBot()
 
-    @bot.tree.command(name="status", description="Battery and usage for the host this bot is running on")
+    @bot.tree.command(name="status", description="Usage, battery (if any) and Pi-hole stats for the host this bot is running on")
     async def status_command(interaction: discord.Interaction) -> None:
         if interaction.user.id not in bot.allowed_ids:
             await interaction.response.send_message(
@@ -104,9 +111,7 @@ def main() -> None:
             )
             return
         await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send(
-            format_status(collect_status(), _device_name()), ephemeral=True
-        )
+        await interaction.followup.send(await _status_report(), ephemeral=True)
 
     bot.run(token)
 

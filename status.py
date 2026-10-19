@@ -1,8 +1,9 @@
 """Collect battery and resource usage from Linux sysfs + psutil.
 
 Works on laptops and Raspberry Pi. Devices without a battery still
-report CPU, RAM, load, and uptime. UPS HATs that expose
-/sys/class/power_supply entries are picked up automatically.
+report CPU, RAM, load, and uptime (the battery and power lines are left
+out). UPS HATs that expose /sys/class/power_supply entries are picked up
+automatically. If PIHOLE_URL is set, a Pi-hole section is added.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
+
+from pihole import PiholeStatus, collect_pihole, format_pihole
 
 POWER_SUPPLY = Path("/sys/class/power_supply")
 
@@ -40,6 +43,7 @@ class DeviceStatus:
     uptime_seconds: float
     ac_online: bool | None
     batteries: list[Battery]
+    pihole: PiholeStatus | None = None
 
 
 def _read_text(path: Path) -> str | None:
@@ -74,6 +78,9 @@ def _collect_batteries() -> list[Battery]:
         if _read_text(device / "type") != "Battery":
             continue
         if _read_int(device / "present") == 0:
+            continue
+        # Batteries of peripherals (wireless mouse, headset, ...) are not the host's.
+        if _read_text(device / "scope") == "Device":
             continue
 
         energy_full = _read_int(device / "energy_full")
@@ -140,6 +147,7 @@ def collect_status() -> DeviceStatus:
         uptime_seconds=time.time() - psutil.boot_time(),
         ac_online=_ac_online(),
         batteries=_collect_batteries(),
+        pihole=collect_pihole(),
     )
 
 
@@ -166,14 +174,12 @@ def format_status(status: DeviceStatus, device_name: str | None = None) -> str:
         f"**Load:** {status.load_1:.2f} {status.load_5:.2f} {status.load_15:.2f}",
         f"**Uptime:** {_format_uptime(status.uptime_seconds)}",
     ]
-    if status.ac_online is True:
-        lines.append("**Power:** AC plugged in")
-    elif status.ac_online is False:
-        lines.append("**Power:** on battery / no AC")
+    if status.batteries:
+        if status.ac_online is True:
+            lines.append("**Power:** AC plugged in")
+        elif status.ac_online is False:
+            lines.append("**Power:** on battery / no AC")
 
-    if not status.batteries:
-        lines.append("**Battery:** none detected")
-    else:
         for battery in status.batteries:
             bits = [battery.name]
             if battery.percent is not None:
@@ -185,10 +191,16 @@ def format_status(status: DeviceStatus, device_name: str | None = None) -> str:
             if battery.health_percent is not None:
                 bits.append(f"health {battery.health_percent}%")
             lines.append("**Battery:** " + " · ".join(bits))
+
+    if status.pihole is not None:
+        lines.extend(format_pihole(status.pihole))
     return "\n".join(lines)
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+
+    load_dotenv()
     print(format_status(collect_status()))
 
 
