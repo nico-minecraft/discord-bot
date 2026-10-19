@@ -1,0 +1,15 @@
+[Unit]
+Description=Discord device status bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/discord-device-status
+ExecStart=%h/Projects/discord-device-status/.venv/bin/python bot.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
